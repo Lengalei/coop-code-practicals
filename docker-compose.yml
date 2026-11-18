@@ -1,0 +1,71 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${DB_PASSWORD:-Payments_dev_2026!}
+    ports: ["1433:1433"]
+    volumes: [sqlserverdata:/var/opt/mssql]
+
+  database-init:
+    image: mcr.microsoft.com/mssql-tools:latest
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        for attempt in {1..60}; do
+          if sqlcmd -S sqlserver -U sa -P "$$MSSQL_SA_PASSWORD" -C -Q "SELECT 1" >/dev/null 2>&1; then
+            sqlcmd -S sqlserver -U sa -P "$$MSSQL_SA_PASSWORD" -C -b -Q "IF DB_ID(N'payments') IS NULL CREATE DATABASE [payments]"
+            exit $?
+          fi
+          sleep 2
+        done
+        echo "SQL Server did not become ready in time" >&2
+        exit 1
+    environment:
+      MSSQL_SA_PASSWORD: ${DB_PASSWORD:-Payments_dev_2026!}
+    depends_on:
+      sqlserver:
+        condition: service_started
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports: ["5672:5672", "15672:15672"]   # 15672 = management UI (guest/guest)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  loki:
+    image: grafana/loki:2.9.8
+    command: -config.file=/etc/loki/local-config.yaml
+    ports: ["3100:3100"]
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    ports: ["3000:3000"]                  # admin/admin -> Explore -> Loki -> {app="payments-api"}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on: [loki]
+
+  app:
+    build: .
+    ports: ["8080:8080"]
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DB_URL: jdbc:sqlserver://sqlserver:1433;databaseName=payments;encrypt=true;trustServerCertificate=true
+      DB_USER: sa
+      DB_PASSWORD: ${DB_PASSWORD:-Payments_dev_2026!}
+      RABBIT_HOST: rabbitmq
+      LOKI_URL: http://loki:3100/loki/api/v1/push
+      LOG_DIR: /app/logs
+      JWT_SECRET: docker-demo-secret-please-change-it-32chars-min
+    volumes: [app-logs:/app/logs]
+    depends_on:
+      database-init: {condition: service_completed_successfully}
+      rabbitmq: {condition: service_healthy}
+
+volumes:
+  sqlserverdata:
+  app-logs:
