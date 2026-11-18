@@ -13,13 +13,17 @@ JWT, and RabbitMQ.
 | `POST` | `/api/v1/auth/register` | None | Register a user |
 | `POST` | `/api/v1/auth/login` | None | Authenticate and return a JWT |
 
-`POST /api/v1/auth/register` and `POST /api/v1/auth/login` accept:
+`POST /api/v1/auth/register` and `POST /api/v1/auth/login` accept a username and password. Set `APP_USERNAME` and `APP_PASSWORD` in the ignored local `.env` file, then load those variables before making requests:
 
-```json
-{
-  "username": "Lengalei",
-  "password": "Passw0rd123"
-}
+```bash
+set -a
+. ./.env
+set +a
+
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg username "$APP_USERNAME" --arg password "$APP_PASSWORD" \
+    '{username: $username, password: $password}')"
 ```
 
 Protected endpoints require `Authorization: Bearer <token>`.
